@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 service-account.json
 .DS_Store
+.timelogger/

@@ -38,6 +38,12 @@ Fields produced:
 - `needs_review`
 - `review_notes`
 
+V2 additions:
+
+- local offline queue with automatic retry
+- auto-promotion of recurring inferred projects into `aliases.json`
+- optional macOS launch agent for always-on local logging
+
 Sheet columns written by `POST /log`:
 
 - `Date`
@@ -84,6 +90,8 @@ The `Review` column is intentionally compact for daily use:
 - blank when the parser is confident
 - `Needs review` when something looks incomplete
 - a short note when the parser inferred a new unknown project or found a conflict
+
+If the same inferred unknown project appears `AUTO_PROMOTE_THRESHOLD` times, the app automatically adds it into [`aliases.json`](/Users/tarz/timelogger/aliases.json) as a saved project.
 
 ## Config structure
 
@@ -181,6 +189,8 @@ Then edit `.env` and set:
 - `GOOGLE_SHEET_NAME`
 - `GOOGLE_WORKSHEET_NAME`
 - `API_BEARER_TOKEN` if you want to protect the webhook
+- `QUEUE_POLL_SECONDS` for queued retry frequency
+- `AUTO_PROMOTE_THRESHOLD` for recurring project promotion
 
 ## Google Sheets setup
 
@@ -280,11 +290,19 @@ timelog() {
   setopt localoptions noxtrace noverbose typesetsilent
 
   local url="${TIMELOGGER_URL:-http://127.0.0.1:8000/log}"
+  local health_url="${url%/log}/health"
 
   if [[ $# -eq 0 ]]; then
     echo "Usage: timelog \"adhoc 2h meeting with mason\""
     echo "   or: timelog \"heman design 3hrs\" \"socials meeting with mason 4hrs\""
     return 1
+  fi
+
+  if [[ "$url" == http://127.0.0.1:8000/log || "$url" == http://localhost:8000/log ]]; then
+    if ! curl -fsS "$health_url" >/dev/null 2>&1; then
+      launchctl kickstart -k "gui/$UID/com.tarz.timelogger" >/dev/null 2>&1 || true
+      sleep 1
+    fi
   fi
 
   local auth_args=()
@@ -319,8 +337,11 @@ payload = json.loads(Path(sys.argv[2]).read_text())
 
 if 200 <= http_code < 300 and payload.get("ok"):
     entry = payload["entry"]
+    prefix = "OK"
+    if payload.get("queued"):
+        prefix = "Queued"
     bits = [
-        "OK",
+        prefix,
         entry["date"],
         f"{entry['duration_hours']}h",
     ]
@@ -331,9 +352,13 @@ if 200 <= http_code < 300 and payload.get("ok"):
     bits.append(f"[{entry['category']}]")
     bits.append(entry["task"])
     print("  ".join(bits))
+    if payload.get("queue_size"):
+        print(f"Queue size: {payload['queue_size']}")
     if entry.get("needs_review"):
         note = entry.get("review_notes") or "Needs review"
         print(f"Review: {note}")
+    if payload.get("promotion_message"):
+        print(payload["promotion_message"])
 else:
     detail = payload.get("detail") or payload
     print(f"Error ({http_code}): {detail}")
@@ -357,7 +382,37 @@ export TIMELOGGER_URL="https://your-app-url/log"
 export TIMELOGGER_TOKEN="your-token-if-used"
 ```
 
-The zsh function only depends on `python3` and `curl`, prints cleaner errors, shows review notes when the parser flags something, and accepts multiple quoted entries in one command.
+The zsh function only depends on `python3` and `curl`, prints cleaner errors, shows review notes when the parser flags something, accepts multiple quoted entries in one command, and tries to wake the macOS background service automatically when you use the local URL.
+
+## macOS background service
+
+Make the helper scripts executable:
+
+```bash
+cd /Users/tarz/timelogger
+chmod +x scripts/run_server.sh scripts/install_launch_agent.sh scripts/uninstall_launch_agent.sh
+```
+
+Install the launch agent:
+
+```bash
+./scripts/install_launch_agent.sh
+```
+
+Useful commands:
+
+```bash
+launchctl kickstart -k "gui/$UID/com.tarz.timelogger"
+launchctl print "gui/$UID/com.tarz.timelogger"
+tail -f ~/Library/Logs/timelogger/stdout.log
+tail -f ~/Library/Logs/timelogger/stderr.log
+```
+
+Remove it later:
+
+```bash
+./scripts/uninstall_launch_agent.sh
+```
 
 If you want a visual cue for reviewable entries, update the print line to include `needs_review` from the API response.
 

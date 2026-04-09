@@ -56,6 +56,22 @@ class ParsedEntry:
             "review_notes": self.review_notes,
         }
 
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "ParsedEntry":
+        return cls(
+            raw_input=payload["raw_input"],
+            task=payload["task"],
+            project=payload["project"],
+            client=payload["client"],
+            via=payload["via"],
+            duration_minutes=int(payload["duration_minutes"]),
+            duration_hours=float(payload["duration_hours"]),
+            category=payload["category"],
+            date=date.fromisoformat(payload["date"]),
+            needs_review=bool(payload["needs_review"]),
+            review_notes=payload["review_notes"],
+        )
+
 
 @dataclass
 class Match:

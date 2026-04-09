@@ -1,5 +1,7 @@
 import json
 import os
+import threading
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -11,6 +13,13 @@ from google.oauth2.service_account import Credentials
 from pydantic import BaseModel, Field
 
 from parser import ParsedEntry, ParseError, parse_entry
+from storage import (
+    enqueue_delivery,
+    load_queue,
+    queue_size,
+    save_queue,
+    track_unknown_project,
+)
 
 
 load_dotenv()
@@ -21,6 +30,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
+STATE_LOCK = threading.Lock()
+STOP_EVENT = threading.Event()
+BACKGROUND_THREAD: Optional[threading.Thread] = None
 
 
 class LogRequest(BaseModel):
@@ -33,6 +45,8 @@ class Settings(BaseModel):
     google_sheet_name: str
     google_worksheet_name: str
     api_bearer_token: Optional[str] = None
+    queue_poll_seconds: int = 60
+    auto_promote_threshold: int = 3
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -55,6 +69,8 @@ class Settings(BaseModel):
             google_sheet_name=os.environ["GOOGLE_SHEET_NAME"],
             google_worksheet_name=os.environ["GOOGLE_WORKSHEET_NAME"],
             api_bearer_token=os.getenv("API_BEARER_TOKEN") or None,
+            queue_poll_seconds=int(os.getenv("QUEUE_POLL_SECONDS", "60")),
+            auto_promote_threshold=int(os.getenv("AUTO_PROMOTE_THRESHOLD", "3")),
         )
 
     @property
@@ -132,11 +148,77 @@ def verify_auth(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+def append_entry_to_sheets(entry: ParsedEntry, source: str, settings: Settings) -> None:
+    GoogleSheetsClient(settings).append_entry(entry, source)
+
+
+def flush_queue(settings: Settings) -> Dict[str, int]:
+    with STATE_LOCK:
+        queue = load_queue()
+        if not queue:
+            return {"flushed": 0, "remaining": 0}
+
+        remaining = []
+        flushed = 0
+        for item in queue:
+            try:
+                append_entry_to_sheets(
+                    ParsedEntry.from_dict(item["entry"]),
+                    item["source"],
+                    settings,
+                )
+                flushed += 1
+            except (gspread.GSpreadException, OSError):
+                remaining.append(item)
+
+        save_queue(remaining)
+        return {"flushed": flushed, "remaining": len(remaining)}
+
+
+def start_queue_worker() -> None:
+    global BACKGROUND_THREAD
+    settings = get_settings()
+
+    if BACKGROUND_THREAD and BACKGROUND_THREAD.is_alive():
+        return
+
+    STOP_EVENT.clear()
+
+    def worker() -> None:
+        while not STOP_EVENT.is_set():
+            try:
+                flush_queue(settings)
+            except Exception:
+                pass
+            STOP_EVENT.wait(settings.queue_poll_seconds)
+
+    BACKGROUND_THREAD = threading.Thread(
+        target=worker,
+        name="timelogger-queue-worker",
+        daemon=True,
+    )
+    BACKGROUND_THREAD.start()
+
+
 app = FastAPI(
     title="timelogger",
     description="Lightweight backend for logging work time to Google Sheets.",
     version="1.0.0",
 )
+
+
+@app.on_event("startup")
+def startup() -> None:
+    start_queue_worker()
+    try:
+        flush_queue(get_settings())
+    except HTTPException:
+        pass
+
+
+@app.on_event("shutdown")
+def shutdown() -> None:
+    STOP_EVENT.set()
 
 
 @app.get("/health")
@@ -152,18 +234,47 @@ def create_log(
 ) -> Dict[str, Any]:
     try:
         entry = parse_entry(payload.text, config)
-        GoogleSheetsClient(settings).append_entry(entry, payload.source)
+
+        promotion_message = None
+        with STATE_LOCK:
+            promotion = track_unknown_project(
+                entry,
+                CONFIG_PATH,
+                settings.auto_promote_threshold,
+            )
+            if promotion:
+                get_config.cache_clear()
+                promotion_message = promotion["message"]
+
+        append_entry_to_sheets(entry, payload.source, settings)
     except ParseError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except gspread.GSpreadException as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Failed to write to Google Sheets: {exc}",
-        ) from exc
+        with STATE_LOCK:
+            enqueue_delivery(entry, payload.source, str(exc))
+            queued_total = queue_size()
+        return {
+            "ok": True,
+            "queued": True,
+            "message": (
+                "Saved locally and will retry automatically when Google Sheets is available."
+            ),
+            "entry": entry.model_dump(),
+            "queue_size": queued_total,
+        }
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        with STATE_LOCK:
+            enqueue_delivery(entry, payload.source, str(exc))
+            queued_total = queue_size()
+        return {
+            "ok": True,
+            "queued": True,
+            "message": "Saved locally and will retry automatically when the Mac is back online.",
+            "entry": entry.model_dump(),
+            "queue_size": queued_total,
+        }
 
-    return {
+    response = {
         "ok": True,
         "message": (
             f"Logged {entry.duration_hours:g}h"
@@ -172,6 +283,9 @@ def create_log(
         ),
         "entry": entry.model_dump(),
     }
+    if promotion_message:
+        response["promotion_message"] = promotion_message
+    return response
 
 
 @app.post("/parse", dependencies=[Depends(verify_auth)])
@@ -198,3 +312,14 @@ def webhook_log(
     config: Dict[str, Any] = Depends(get_config),
 ) -> Dict[str, Any]:
     return create_log(payload=payload, settings=settings, config=config)
+
+
+@app.get("/queue-status", dependencies=[Depends(verify_auth)])
+def queue_status() -> Dict[str, Any]:
+    with STATE_LOCK:
+        return {"queued": queue_size()}
+
+
+@app.post("/flush", dependencies=[Depends(verify_auth)])
+def flush_now(settings: Settings = Depends(get_settings)) -> Dict[str, int]:
+    return flush_queue(settings)
