@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: timelogger
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: GOOGLE_SERVICE_ACCOUNT_FILE
+        value: ./service-account.json
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: GOOGLE_SHEET_NAME
+        sync: false
+      - key: GOOGLE_WORKSHEET_NAME
+        sync: false
+      - key: GOOGLE_WORKSHEET_TEMPLATE_NAME
+        sync: false
+      - key: API_BEARER_TOKEN
+        sync: false
+      - key: QUEUE_POLL_SECONDS
+        value: 60
+      - key: AUTO_PROMOTE_THRESHOLD
+        value: 3

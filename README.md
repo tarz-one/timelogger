@@ -188,6 +188,7 @@ Then edit `.env` and set:
 - `GOOGLE_SERVICE_ACCOUNT_FILE`
 - `GOOGLE_SHEET_NAME`
 - `GOOGLE_WORKSHEET_NAME`
+- `GOOGLE_WORKSHEET_TEMPLATE_NAME` if you want a separate worksheet template source
 - `API_BEARER_TOKEN` if you want to protect the webhook
 - `QUEUE_POLL_SECONDS` for queued retry frequency
 - `AUTO_PROMOTE_THRESHOLD` for recurring project promotion
@@ -228,7 +229,7 @@ GOOGLE_SERVICE_ACCOUNT_FILE=./service-account.json
 ### 4. Create and share the sheet
 
 1. Create a Google Sheet with the spreadsheet name you want to use.
-2. Add a worksheet tab with the name you want to use.
+2. Add one worksheet tab to use as your template, for example `APRIL`.
 3. In the first row, add headers like:
 
 ```text
@@ -240,6 +241,14 @@ Date | Client | Via | Project | Category | Task | Hours | Source | Review
 6. Share the sheet with that service account email as an editor.
 
 If you skip the sharing step, the API will authenticate successfully but fail to open the sheet.
+
+Monthly worksheet behavior:
+
+- logs are written to a worksheet based on the entry date, such as `APRIL`, `MAY`, or `JUNE`
+- if that month tab does not exist yet, the app creates it automatically
+- the new month tab copies the header row from your template worksheet
+- by default, `GOOGLE_WORKSHEET_NAME` is used as the template worksheet name
+- if you want a separate dedicated template tab later, set `GOOGLE_WORKSHEET_TEMPLATE_NAME`
 
 Why Drive API is needed:
 
@@ -352,8 +361,8 @@ if 200 <= http_code < 300 and payload.get("ok"):
     bits.append(f"[{entry['category']}]")
     bits.append(entry["task"])
     print("  ".join(bits))
-    if payload.get("queue_size"):
-        print(f"Queue size: {payload['queue_size']}")
+    if payload.get("queue_size", 0) > 0:
+        print(f"Logs unsent: {payload['queue_size']}")
     if entry.get("needs_review"):
         note = entry.get("review_notes") or "Needs review"
         print(f"Review: {note}")

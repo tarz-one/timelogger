@@ -13,6 +13,24 @@ DATE_PATTERNS = [
     re.compile(r"\b(?P<iso>\d{4}-\d{2}-\d{2})\b"),
     re.compile(r"\b(?P<mdy>\d{1,2}/\d{1,2}/\d{2,4})\b"),
     re.compile(r"\b(?P<md>\d{1,2}/\d{1,2})\b"),
+    re.compile(r"\b(?P<mdy_dash>\d{1,2}-\d{1,2}-\d{2,4})\b"),
+    re.compile(r"\b(?P<md_dash>\d{1,2}-\d{1,2})\b"),
+    re.compile(
+        r"\b(?P<month_name>"
+        r"(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|"
+        r"jul|july|aug|august|sep|sept|september|oct|october|nov|november|"
+        r"dec|december)"
+        r"\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?"
+        r")\b"
+    ),
+    re.compile(
+        r"\b(?P<month_compact>"
+        r"(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|"
+        r"jul|july|aug|august|sep|sept|september|oct|october|nov|november|"
+        r"dec|december)"
+        r"\d{1,2}(?:st|nd|rd|th)?"
+        r")\b"
+    ),
 ]
 
 TASK_CONNECTOR_WORDS = {
@@ -199,6 +217,15 @@ def parse_entry(text: str, config: Dict[str, Any]) -> ParsedEntry:
 
 def normalize_text(text: str) -> str:
     lowered = text.strip().lower()
+    lowered = re.sub(
+        r"\b("
+        r"jan|january|feb|february|mar|march|apr|april|may|jun|june|"
+        r"jul|july|aug|august|sep|sept|september|oct|october|nov|november|"
+        r"dec|december"
+        r")(\d{1,2}(?:st|nd|rd|th)?)\b",
+        r"\1 \2",
+        lowered,
+    )
     lowered = re.sub(r"\s+", " ", lowered)
     lowered = re.sub(r"(?<=\d)\s*(hours|hour|hrs|hr)\b", "h", lowered)
     lowered = re.sub(r"(?<=\d)\s*(minutes|minute|mins|min)\b", "m", lowered)
@@ -233,6 +260,13 @@ def parse_date_string(value: str, default_year: int) -> date:
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
         return datetime.strptime(value, "%Y-%m-%d").date()
 
+    if re.fullmatch(r"\d{1,2}-\d{1,2}-\d{2,4}", value):
+        for fmt in ("%m-%d-%Y", "%m-%d-%y"):
+            try:
+                return datetime.strptime(value, fmt).date()
+            except ValueError:
+                continue
+
     if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}", value):
         for fmt in ("%m/%d/%Y", "%m/%d/%y"):
             try:
@@ -240,8 +274,25 @@ def parse_date_string(value: str, default_year: int) -> date:
             except ValueError:
                 continue
 
+    if re.fullmatch(r"\d{1,2}-\d{1,2}", value):
+        return datetime.strptime(f"{value}-{default_year}", "%m-%d-%Y").date()
+
     if re.fullmatch(r"\d{1,2}/\d{1,2}", value):
         return datetime.strptime(f"{value}/{default_year}", "%m/%d/%Y").date()
+
+    cleaned = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", value)
+    cleaned = re.sub(r"\s+", " ", cleaned.replace(",", " ")).strip()
+    compact_month = re.fullmatch(r"([a-zA-Z]+)(\d{1,2})", cleaned)
+    if compact_month:
+        cleaned = f"{compact_month.group(1)} {compact_month.group(2)}"
+    for fmt in ("%B %d %Y", "%b %d %Y", "%B %d", "%b %d"):
+        try:
+            parsed = datetime.strptime(cleaned, fmt)
+            if "%Y" not in fmt:
+                return parsed.replace(year=default_year).date()
+            return parsed.date()
+        except ValueError:
+            continue
 
     raise ParseError(f"Unsupported date format: {value}")
 

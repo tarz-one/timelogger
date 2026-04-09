@@ -1,7 +1,7 @@
 import json
 import os
 import threading
-import time
+from calendar import month_name
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -42,8 +42,10 @@ class LogRequest(BaseModel):
 
 class Settings(BaseModel):
     google_service_account_file: str
+    google_service_account_json: Optional[str] = None
     google_sheet_name: str
     google_worksheet_name: str
+    google_worksheet_template_name: Optional[str] = None
     api_bearer_token: Optional[str] = None
     queue_poll_seconds: int = 60
     auto_promote_threshold: int = 3
@@ -66,8 +68,11 @@ class Settings(BaseModel):
 
         return cls(
             google_service_account_file=os.environ["GOOGLE_SERVICE_ACCOUNT_FILE"],
+            google_service_account_json=os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or None,
             google_sheet_name=os.environ["GOOGLE_SHEET_NAME"],
             google_worksheet_name=os.environ["GOOGLE_WORKSHEET_NAME"],
+            google_worksheet_template_name=os.getenv("GOOGLE_WORKSHEET_TEMPLATE_NAME")
+            or None,
             api_bearer_token=os.getenv("API_BEARER_TOKEN") or None,
             queue_poll_seconds=int(os.getenv("QUEUE_POLL_SECONDS", "60")),
             auto_promote_threshold=int(os.getenv("AUTO_PROMOTE_THRESHOLD", "3")),
@@ -93,17 +98,24 @@ def load_config() -> Dict[str, Any]:
 
 class GoogleSheetsClient:
     def __init__(self, settings: Settings):
-        credentials = Credentials.from_service_account_file(
-            str(settings.service_account_path),
-            scopes=SCOPES,
-        )
+        self.settings = settings
+        if settings.google_service_account_json:
+            credentials = Credentials.from_service_account_info(
+                json.loads(settings.google_service_account_json),
+                scopes=SCOPES,
+            )
+        else:
+            credentials = Credentials.from_service_account_file(
+                str(settings.service_account_path),
+                scopes=SCOPES,
+            )
         self.client = gspread.authorize(credentials)
         self.sheet = self.client.open(settings.google_sheet_name)
-        self.worksheet = self.sheet.worksheet(settings.google_worksheet_name)
 
     def append_entry(self, entry: ParsedEntry, source: str) -> None:
+        worksheet = self.get_or_create_month_worksheet(entry)
         review_value = entry.review_notes if entry.review_notes else ("Needs review" if entry.needs_review else "")
-        self.worksheet.insert_row(
+        worksheet.insert_row(
             [
                 entry.date.isoformat(),
                 entry.client,
@@ -118,6 +130,45 @@ class GoogleSheetsClient:
             index=2,
             value_input_option="USER_ENTERED",
         )
+
+    def get_or_create_month_worksheet(self, entry: ParsedEntry):
+        worksheet_name = month_name[entry.date.month].upper()
+        try:
+            return self.sheet.worksheet(worksheet_name)
+        except gspread.WorksheetNotFound:
+            return self.create_month_worksheet(worksheet_name)
+
+    def create_month_worksheet(self, worksheet_name: str):
+        template_name = (
+            self.settings.google_worksheet_template_name
+            or self.settings.google_worksheet_name
+        )
+        template = self.sheet.worksheet(template_name)
+        response = self.sheet.batch_update(
+            {
+                "requests": [
+                    {
+                        "duplicateSheet": {
+                            "sourceSheetId": template.id,
+                            "newSheetName": worksheet_name,
+                        }
+                    }
+                ]
+            }
+        )
+        new_sheet_id = response["replies"][0]["duplicateSheet"]["properties"]["sheetId"]
+        worksheet = self.sheet.get_worksheet_by_id(new_sheet_id)
+        worksheet.batch_clear([f"A2:{column_index_to_letter(worksheet.col_count)}{worksheet.row_count}"])
+        return worksheet
+
+
+def column_index_to_letter(column_index: int) -> str:
+    letters = []
+    current = column_index
+    while current > 0:
+        current, remainder = divmod(current - 1, 26)
+        letters.append(chr(65 + remainder))
+    return "".join(reversed(letters))
 
 
 @lru_cache(maxsize=1)
@@ -274,6 +325,9 @@ def create_log(
             "queue_size": queued_total,
         }
 
+    with STATE_LOCK:
+        queued_total = queue_size()
+
     response = {
         "ok": True,
         "message": (
@@ -282,6 +336,7 @@ def create_log(
             f" [{entry.category}] on {entry.date.isoformat()}"
         ),
         "entry": entry.model_dump(),
+        "queue_size": queued_total,
     }
     if promotion_message:
         response["promotion_message"] = promotion_message
