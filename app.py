@@ -41,7 +41,7 @@ class LogRequest(BaseModel):
 
 
 class Settings(BaseModel):
-    google_service_account_file: str
+    google_service_account_file: Optional[str] = None
     google_service_account_json: Optional[str] = None
     google_sheet_name: str
     google_worksheet_name: str
@@ -53,13 +53,14 @@ class Settings(BaseModel):
     @classmethod
     def from_env(cls) -> "Settings":
         missing = []
-        for key in [
-            "GOOGLE_SERVICE_ACCOUNT_FILE",
-            "GOOGLE_SHEET_NAME",
-            "GOOGLE_WORKSHEET_NAME",
-        ]:
+        for key in ["GOOGLE_SHEET_NAME", "GOOGLE_WORKSHEET_NAME"]:
             if not os.getenv(key):
                 missing.append(key)
+
+        if not os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") and not os.getenv(
+            "GOOGLE_SERVICE_ACCOUNT_FILE"
+        ):
+            missing.append("GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_SERVICE_ACCOUNT_FILE")
 
         if missing:
             raise RuntimeError(
@@ -67,7 +68,7 @@ class Settings(BaseModel):
             )
 
         return cls(
-            google_service_account_file=os.environ["GOOGLE_SERVICE_ACCOUNT_FILE"],
+            google_service_account_file=os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE") or None,
             google_service_account_json=os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or None,
             google_sheet_name=os.environ["GOOGLE_SHEET_NAME"],
             google_worksheet_name=os.environ["GOOGLE_WORKSHEET_NAME"],
@@ -80,6 +81,10 @@ class Settings(BaseModel):
 
     @property
     def service_account_path(self) -> Path:
+        if not self.google_service_account_file:
+            raise RuntimeError(
+                "GOOGLE_SERVICE_ACCOUNT_FILE is not set and no inline JSON credentials were provided."
+            )
         path = Path(self.google_service_account_file).expanduser()
         if not path.is_absolute():
             path = BASE_DIR / path

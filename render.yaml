@@ -9,7 +9,6 @@ services:
     autoDeploy: true
     envVars:
       - key: GOOGLE_SERVICE_ACCOUNT_FILE
-        value: ./service-account.json
         sync: false
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
         sync: false
