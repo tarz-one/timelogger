@@ -1,0 +1,76 @@
+{
+  "clients": [
+    {
+      "name": "AdHoc",
+      "aliases": ["adhoc", "ad hoc", "ad-hoc"]
+    },
+    {
+      "name": "Heads In the Sky",
+      "aliases": [
+        "heads in the sky",
+        "headsinthesky",
+        "hits",
+        "headinthesky",
+        "head in the sky"
+      ]
+    },
+    {
+      "name": "Three Fish Studios",
+      "aliases": ["3fish", "threefish", "three fish", "3 fish"]
+    },
+    {
+      "name": "Nebula",
+      "aliases": ["nebula", "neb"]
+    }
+  ],
+  "projects": [
+    {
+      "name": "Heman",
+      "aliases": ["heman"],
+      "client": "Heads In the Sky",
+      "via": "AdHoc",
+      "default_category": "Drone Design"
+    },
+    {
+      "name": "Angelyne",
+      "aliases": ["angelyne"],
+      "client": "Heads In the Sky",
+      "via": "AdHoc",
+      "default_category": "Drone Design"
+    }
+  ],
+  "categories": [
+    {
+      "name": "Drone Design",
+      "aliases": ["design", "drone design", "dronedesign"]
+    },
+    {
+      "name": "Operations",
+      "aliases": ["ops", "operations", "setup", "onsite"]
+    },
+    {
+      "name": "Meeting",
+      "aliases": ["meeting", "call", "discussion", "review"]
+    },
+    {
+      "name": "Socials",
+      "aliases": ["socials", "social", "posting", "caption", "content"]
+    },
+    {
+      "name": "Admin",
+      "aliases": ["admin", "invoice", "email"]
+    },
+    {
+      "name": "Revisions",
+      "aliases": ["revisions", "revision", "edit", "edits"]
+    }
+  ],
+  "people": [
+    {
+      "name": "Mason",
+      "aliases": ["mason"],
+      "client": "AdHoc",
+      "default_category": "Meeting"
+    }
+  ]
+}
