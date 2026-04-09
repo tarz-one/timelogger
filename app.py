@@ -282,6 +282,16 @@ def healthcheck() -> Dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/")
+def root() -> Dict[str, str]:
+    return {
+        "name": "timelogger",
+        "status": "ok",
+        "health": "/health",
+        "log": "/log",
+    }
+
+
 @app.post("/log", dependencies=[Depends(verify_auth)])
 def create_log(
     payload: LogRequest,

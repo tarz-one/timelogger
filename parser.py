@@ -44,6 +44,37 @@ TASK_CONNECTOR_WORDS = {
     "at",
 }
 
+NUMBER_WORDS = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+
 
 @dataclass
 class ParsedEntry:
@@ -227,9 +258,46 @@ def normalize_text(text: str) -> str:
         lowered,
     )
     lowered = re.sub(r"\s+", " ", lowered)
-    lowered = re.sub(r"(?<=\d)\s*(hours|hour|hrs|hr)\b", "h", lowered)
-    lowered = re.sub(r"(?<=\d)\s*(minutes|minute|mins|min)\b", "m", lowered)
+    lowered = re.sub(r"(?<=\d)[-\s]*(hours|hour|hrs|hr)\b", "h", lowered)
+    lowered = re.sub(r"(?<=\d)[-\s]*(minutes|minute|mins|min)\b", "m", lowered)
+    lowered = normalize_spoken_durations(lowered)
     return lowered
+
+
+def normalize_spoken_durations(text: str) -> str:
+    def replacer(match: re.Match[str]) -> str:
+        number_words = match.group("number")
+        suffix = match.group("unit")
+        value = words_to_number(number_words)
+        if value is None:
+            return match.group(0)
+        unit = "h" if suffix.startswith(("hour", "hr")) else "m"
+        return f"{value}{unit}"
+
+    pattern = re.compile(
+        r"\b(?P<number>(?:half|(?:"
+        r"zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+        r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+        r"twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety"
+        r")(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?))"
+        r"[-\s]+(?P<unit>hours|hour|hrs|hr|minutes|minute|mins|min)\b"
+    )
+    return pattern.sub(replacer, text)
+
+
+def words_to_number(words: str) -> Optional[float]:
+    normalized = words.replace("-", " ").strip()
+    if normalized == "half":
+        return 0.5
+    parts = [part for part in normalized.split() if part]
+    if not parts:
+        return None
+    total = 0
+    for part in parts:
+        if part not in NUMBER_WORDS:
+            return None
+        total += NUMBER_WORDS[part]
+    return float(total)
 
 
 def extract_date(text: str) -> Tuple[date, str]:
@@ -410,4 +478,9 @@ def infer_unknown_project(
 def clean_task(task: str) -> str:
     task = task.strip(" -,:")
     task = re.sub(r"\s+", " ", task)
-    return task.title()
+    tokens = task.split()
+    while tokens and tokens[0] in TASK_CONNECTOR_WORDS:
+        tokens.pop(0)
+    while tokens and tokens[-1] in TASK_CONNECTOR_WORDS:
+        tokens.pop()
+    return " ".join(tokens).title()

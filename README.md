@@ -490,21 +490,17 @@ uvicorn app:app --host 0.0.0.0 --port $PORT
 
 ### Render
 
-1. Create a new `Web Service`.
-2. Point it at this project.
-3. Build command:
-
-```bash
-pip install -r requirements.txt
-```
-
-4. Start command:
-
-```bash
-uvicorn app:app --host 0.0.0.0 --port $PORT
-```
-
-5. Add the environment variables from `.env.example`.
+1. Create a new `Blueprint` or `Web Service` from this GitHub repo.
+2. If you use the repo's `render.yaml`, Render will prefill the service settings for you.
+3. Add these environment variables:
+   - `GOOGLE_SERVICE_ACCOUNT_JSON`
+   - `GOOGLE_SHEET_NAME`
+   - `GOOGLE_WORKSHEET_NAME`
+   - `GOOGLE_WORKSHEET_TEMPLATE_NAME` if you want a dedicated template tab
+   - `API_BEARER_TOKEN`
+4. Paste the full contents of your `service-account.json` file into `GOOGLE_SERVICE_ACCOUNT_JSON`.
+5. Deploy and confirm `https://your-service.onrender.com/health` returns `{"status":"ok"}`.
+6. Use that public base URL in your iPhone Shortcut's `Get Contents of URL` action.
 
 For either platform, set `TIMELOGGER_URL` in your shell and use that same public URL in the iPhone Shortcut.
 
