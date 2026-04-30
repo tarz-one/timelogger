@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 import gspread
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import HTMLResponse
 from google.oauth2.service_account import Credentials
 from pydantic import BaseModel, Field
 
@@ -289,7 +290,195 @@ def root() -> Dict[str, str]:
         "status": "ok",
         "health": "/health",
         "log": "/log",
+        "quick": "/quick",
     }
+
+
+@app.get("/quick", response_class=HTMLResponse)
+def quick_log_page(settings: Settings = Depends(get_settings)) -> HTMLResponse:
+    token_hint = settings.api_bearer_token or ""
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>timelogger</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      --bg: #f3f0e8;
+      --card: #fffdf8;
+      --ink: #1d2a22;
+      --muted: #6f746f;
+      --accent: #1f5f4a;
+      --accent-2: #dfeae3;
+      --border: #d6dbd2;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: ui-rounded, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(180deg, #edf4ef 0%, var(--bg) 100%);
+      color: var(--ink);
+      min-height: 100vh;
+      padding: 24px 16px;
+    }}
+    .wrap {{
+      max-width: 680px;
+      margin: 0 auto;
+    }}
+    .card {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: 0 14px 30px rgba(23, 41, 31, 0.08);
+    }}
+    h1 {{ margin: 0 0 8px; font-size: 28px; }}
+    p {{ margin: 0 0 16px; color: var(--muted); line-height: 1.45; }}
+    label {{
+      display: block;
+      margin: 16px 0 8px;
+      font-size: 14px;
+      font-weight: 600;
+    }}
+    textarea, input {{
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 16px;
+      font: inherit;
+      background: white;
+      color: var(--ink);
+    }}
+    textarea {{ min-height: 120px; resize: vertical; }}
+    .row {{
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }}
+    button {{
+      margin-top: 18px;
+      width: 100%;
+      border: 0;
+      border-radius: 14px;
+      padding: 14px 18px;
+      background: var(--accent);
+      color: white;
+      font: inherit;
+      font-weight: 700;
+    }}
+    .hint {{
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--muted);
+      white-space: pre-line;
+    }}
+    .result {{
+      margin-top: 16px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: var(--accent-2);
+      white-space: pre-wrap;
+      font-size: 14px;
+    }}
+    .error {{ background: #f9dfdf; color: #7d1b1b; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>timelogger</h1>
+      <p>Type a log exactly like terminal. Great for phone use when Shortcut acts up.</p>
+      <div class="row">
+        <div>
+          <label for="token">API token</label>
+          <input id="token" type="password" placeholder="Paste token once">
+        </div>
+        <div>
+          <label for="text">Entry</label>
+          <textarea id="text" placeholder="Examples:
+meeting with mason three hours
+prj: coachella ;; meeting with mason 1.5h
+newprj: firedance festival ;; rehearsal 2h yesterday"></textarea>
+        </div>
+      </div>
+      <button id="submit">Log Time</button>
+      <div class="hint">Project override:
+prj: Coachella ;; meeting with mason 1.5h
+
+Brand-new project:
+newprj: Firedance Festival ;; rehearsal 2h yesterday</div>
+      <div id="result" class="result" hidden></div>
+    </div>
+  </div>
+  <script>
+    const tokenEl = document.getElementById('token');
+    const textEl = document.getElementById('text');
+    const resultEl = document.getElementById('result');
+    const submitEl = document.getElementById('submit');
+    const defaultToken = {json.dumps(token_hint)};
+
+    const savedToken = localStorage.getItem('timelogger_token');
+    if (savedToken) {{
+      tokenEl.value = savedToken;
+    }} else if (defaultToken) {{
+      tokenEl.value = defaultToken;
+    }}
+
+    tokenEl.addEventListener('change', () => {{
+      localStorage.setItem('timelogger_token', tokenEl.value.trim());
+    }});
+
+    submitEl.addEventListener('click', async () => {{
+      const text = textEl.value.trim();
+      const token = tokenEl.value.trim();
+      if (!text) return;
+
+      submitEl.disabled = true;
+      submitEl.textContent = 'Logging...';
+      resultEl.hidden = true;
+      resultEl.className = 'result';
+
+      try {{
+        const headers = {{ 'Content-Type': 'application/json' }};
+        if (token) headers['Authorization'] = `Bearer ${{token}}`;
+
+        const response = await fetch('/log', {{
+          method: 'POST',
+          headers,
+          body: JSON.stringify({{ text, source: 'web' }})
+        }});
+
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {{
+          throw new Error(payload.detail || payload.message || 'Request failed.');
+        }}
+
+        const entry = payload.entry;
+        const lines = [
+          `${{entry.date}}  ${{entry.duration_hours}}h  ${{entry.project || entry.client || ''}}  [${{entry.category}}]  ${{entry.task}}`
+        ];
+        if (payload.queue_size > 0) lines.push(`Logs unsent: ${{payload.queue_size}}`);
+        if (entry.needs_review) lines.push(`Review: ${{entry.review_notes || 'Needs review'}}`);
+        if (payload.promotion_message) lines.push(payload.promotion_message);
+
+        resultEl.textContent = lines.join('\\n');
+        resultEl.hidden = false;
+        textEl.value = '';
+      }} catch (error) {{
+        resultEl.textContent = error.message;
+        resultEl.className = 'result error';
+        resultEl.hidden = false;
+      }} finally {{
+        submitEl.disabled = false;
+        submitEl.textContent = 'Log Time';
+      }}
+    }});
+  </script>
+</body>
+</html>"""
+    return HTMLResponse(html)
 
 
 @app.post("/log", dependencies=[Depends(verify_auth)])

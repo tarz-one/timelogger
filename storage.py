@@ -11,7 +11,9 @@ DATA_DIR = Path(__file__).resolve().parent / ".timelogger"
 QUEUE_PATH = DATA_DIR / "queue.json"
 PROJECT_COUNTS_PATH = DATA_DIR / "project_counts.json"
 
-UNKNOWN_PROJECT_RE = re.compile(r"Inferred unknown project '([^']+)'\.")
+UNKNOWN_PROJECT_RE = re.compile(
+    r"(?:Inferred unknown project|Explicit project override for unknown project) '([^']+)'\."
+)
 
 
 def ensure_data_dir() -> None:

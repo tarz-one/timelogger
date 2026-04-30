@@ -44,6 +44,11 @@ TASK_CONNECTOR_WORDS = {
     "at",
 }
 
+PROJECT_DIRECTIVE_RE = re.compile(
+    r"^\s*(?P<mode>newprj|prj|project)\s*:?\s*(?P<project>.+?)\s*;;\s*(?P<rest>.+)\s*$",
+    re.IGNORECASE,
+)
+
 NUMBER_WORDS = {
     "zero": 0,
     "one": 1,
@@ -143,6 +148,11 @@ def parse_entry(text: str, config: Dict[str, Any]) -> ParsedEntry:
     if not normalized:
         raise ParseError("Input text is empty.")
 
+    forced_project_name, forced_project_config, normalized = extract_project_directive(
+        normalized,
+        config,
+    )
+
     parsed_date, working_text = extract_date(normalized)
     duration_minutes, working_text = extract_duration(working_text)
     tokens = tokenize(working_text)
@@ -152,7 +162,7 @@ def parse_entry(text: str, config: Dict[str, Any]) -> ParsedEntry:
 
     index = build_index(config)
 
-    project_match = find_best_match(tokens, index.projects)
+    project_match = None if forced_project_name else find_best_match(tokens, index.projects)
     client_match = find_best_match(tokens, index.clients)
     category_match = find_best_match(tokens, index.categories)
     person_match = find_best_match(tokens, index.people)
@@ -166,7 +176,18 @@ def parse_entry(text: str, config: Dict[str, Any]) -> ParsedEntry:
     via = ""
     category = ""
 
-    if project_match:
+    if forced_project_name:
+        project = forced_project_name
+        if forced_project_config:
+            client = forced_project_config.get("client", "")
+            via = forced_project_config.get("via", "")
+            category = forced_project_config.get("default_category", "")
+        else:
+            needs_review = True
+            review_notes.append(
+                f"Explicit project override for unknown project '{project}'. Review before promoting it into config."
+            )
+    elif project_match:
         project = project_match.name
         removed_indexes.update(range(project_match.start, project_match.end))
         project_defaults = project_match.config
@@ -262,6 +283,25 @@ def normalize_text(text: str) -> str:
     lowered = re.sub(r"(?<=\d)[-\s]*(minutes|minute|mins|min)\b", "m", lowered)
     lowered = normalize_spoken_durations(lowered)
     return lowered
+
+
+def extract_project_directive(
+    text: str,
+    config: Dict[str, Any],
+) -> Tuple[str, Optional[Dict[str, Any]], str]:
+    match = PROJECT_DIRECTIVE_RE.match(text)
+    if not match:
+        return "", None, text
+
+    project_phrase = clean_task(match.group("project"))
+    remainder = match.group("rest").strip()
+    if not project_phrase or not remainder:
+        return "", None, text
+
+    lookup = build_alias_lookup(config.get("projects", []))
+    forced_config = lookup.get(normalize_phrase(project_phrase))
+    forced_name = forced_config["name"] if forced_config else project_phrase
+    return forced_name, forced_config, remainder
 
 
 def normalize_spoken_durations(text: str) -> str:
@@ -366,9 +406,10 @@ def parse_date_string(value: str, default_year: int) -> date:
 
 
 def extract_duration(text: str) -> Tuple[int, str]:
+    number_pattern = r"(?:\d+(?:\.\d+)?|\.\d+)"
     patterns = [
-        re.compile(r"\b(?P<value>\d+(?:\.\d+)?)\s*h\b"),
-        re.compile(r"\b(?P<value>\d+)\s*m\b"),
+        re.compile(rf"(?<![\d.])(?P<value>{number_pattern})\s*h\b"),
+        re.compile(rf"(?<![\d.])(?P<value>{number_pattern})\s*m\b"),
     ]
 
     matches = []
